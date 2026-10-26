@@ -85,7 +85,32 @@ ESP32_C3_TOCK_TARGETS := rv32imc|rv32imc.0x403B8080.0x3FCA4000|0x403B8080|0x3FCA
 
 VEER_EL2_TOCK_TARGETS := rv32imc|rv32imc.0x20300080.0x20602000|0x20300080|0x20602000
 
-# Include the RISC-V targets.
+
+# By default, each 32-bit RISC-V app is linked many times, once for every fixed
+# address where a known board might place it. With `RISCV_RELOCATABLE=1`, it is
+# instead built once per architecture, like ARM apps. crt0 copies the code into
+# the app's RAM at startup, next to its data, so code and data move together.
+# The addresses stored in variables are corrected by crt0, with the same
+# relocation data that ARM apps use.
+#
+# Needs C libraries built with `-fPIC`.
+RISCV_RELOCATABLE ?= 0
+ifeq ($(RISCV_RELOCATABLE),1)
+  TOCK_TARGETS ?= cortex-m0\
+                  cortex-m3\
+                  cortex-m4\
+                  cortex-m7\
+                  rv32imc\
+                  rv32imac\
+                  $(QEMU_RV64_VIRT_TOCK_TARGETS)
+  # Built as position-independent code, like ARM apps.
+  override CPPFLAGS_rv32 += $(CPPFLAGS_PIC) -DTOCK_RISCV_RELOCATABLE
+  LAYOUT_rv32i    := $(TOCK_USERLAND_BASE_DIR)/userland_riscv_relocatable.ld
+  LAYOUT_rv32imc  := $(TOCK_USERLAND_BASE_DIR)/userland_riscv_relocatable.ld
+  LAYOUT_rv32imac := $(TOCK_USERLAND_BASE_DIR)/userland_riscv_relocatable.ld
+endif
+
+# Include the RISC-V targets if `RISCV_RELOCATABLE=0` (the default).
 #  rv32imac|rv32imac.0x20040080.0x80002800 # RISC-V for HiFive1b
 #  rv32imc|rv32imc.0x41000080.0x42008000   # RISC-V for LiteX Arty-A7
 #  rv32imc|rv32imc.0x00080080.0x40008000   # RISC-V for LiteX Simulator
