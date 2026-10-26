@@ -50,6 +50,19 @@ struct hdr {
   uint32_t reldata_start;
   // 36: The size of the stack requested by this application.
   uint32_t stack_size;
+
+#if defined(TOCK_RISCV_RELOCATABLE)
+  // Only relocatable RISC-V apps (`userland_riscv_relocatable.ld`) have these
+  // fields. Their code runs from RAM, and crt0 copies it there.
+  //
+  // 40: Offset of the code in flash from the start of the application binary.
+  uint32_t text_sym_start;
+  // 44: Offset of where the code needs to be placed in memory from the start
+  //     of the application's memory region.
+  uint32_t text_start;
+  // 48: Size of the code.
+  uint32_t text_size;
+#endif
 };
 
 // The structure of the relative data section. This structure comes from the
@@ -237,11 +250,58 @@ void _start(void* app_start __attribute__((unused)),
     "mv  a1, t1\n"              // a1 = app_brk
     "ecall\n"                   // memop
 
+#if defined(TOCK_RISCV_RELOCATABLE)
+    // The code of a relocatable app is linked to run from the app's memory,
+    // next to its data, but the kernel starts it here in flash. Copy the code
+    // into memory and continue in the copy. Until the jump, this code only
+    // uses registers and the crt0 header, so it works from flash.
+    //
+    // Goal is to do the following:
+    // uint32_t* src = app_start + myhdr->text_sym_start;
+    // uint32_t* dst = mem_start + myhdr->text_start;
+    // memcpy(dst, src, myhdr->text_size);
+
+    // Setup the source, destination, and end of source pointers for the copy.
+    "lw   t0, 40(s0)\n"         // t0 = myhdr->text_sym_start
+    "add  t0, t0, s0\n"         // t0 = src = app_start + text_sym_start
+    "lw   t1, 44(s0)\n"         // t1 = myhdr->text_start
+    "add  t1, t1, s2\n"         // t1 = dst = mem_start + text_start
+    "lw   t2, 48(s0)\n"         // t2 = myhdr->text_size
+    "add  t2, t2, t0\n"         // t2 = end = src + text_size
+    "sub  t3, t1, t0\n"         // t3 = dst - src = how far the code moves
+
+    // while (src < end) { *dst++ = *src++; }
+    "1:\n"
+    "bgeu t0, t2, 2f\n"         // if src >= end, done copying
+    "lw   t4, 0(t0)\n"          // t4 = *src
+    "sw   t4, 0(t1)\n"          // *dst = t4
+    "addi t0, t0, 4\n"          // src++
+    "addi t1, t1, 4\n"          // dst++
+    "j    1b\n"                 // loop back
+    "2:\n"
+
+    // fence.i to ensure that the instruction cache is updated with the new code.
+    ".option push\n"
+    ".option arch, +zifencei\n"
+    "fence.i\n"
+    ".option pop\n"
+
+    // Continue with the same C startup as ARM apps, `_c_start_pic`, but in the
+    // copy. `lla` gives its address here in flash, and the copy is the same
+    // distance away as the rest of the code.
+    "lla  t0, _c_start_pic\n"   // t0 = &_c_start_pic in flash
+    "add  t0, t0, t3\n"         // t0 = &_c_start_pic in the copy
+    "mv   a0, s0\n"             // first arg is app_start
+    "mv   s0, sp\n"             // Set the frame pointer to sp.
+    "mv   a1, s2\n"             // second arg is mem_start
+    "jr   t0\n"
+#else
     // Call into the rest of startup. This should never return.
     "mv   a0, s0\n"             // first arg is app_start
     "mv   s0, sp\n"             // Set the frame pointer to sp.
     "mv   a1, s2\n"             // second arg is mem_start
     "jal  _c_start_nopic\n"
+#endif
     );
 
 #else
