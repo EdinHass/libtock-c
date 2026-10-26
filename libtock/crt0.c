@@ -332,6 +332,14 @@ void _c_start_pic(uintptr_t app_start, uintptr_t mem_start) {
   uintptr_t* got_sym_start = (uintptr_t*)(myhdr->got_sym_start + app_start);
   // Iterate all entries in the table and correct the addresses.
   for (uint32_t i = 0; i < (myhdr->got_size / (uint32_t)sizeof(uint32_t)); i++) {
+
+    // If the entry is 0, then it is a null pointer and we don't need to
+    // correct it.
+    if (got_sym_start[i] == 0) {
+      got_start[i] = 0;
+      continue;
+    }
+
     // Use the sentinel here. If the most significant bit is 0, then we know
     // this offset is pointing to an address in memory. If the MSB is 1, then
     // the offset refers to a value in flash.
